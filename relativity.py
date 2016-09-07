@@ -513,15 +513,43 @@ class Config:
         else:
             return True
     def sort_by_date(self,direction='desc'):
+        '''
+
+        while True:
+            asc_sort = E("""return $('th[title="MasterDateTime"]').find('span[sort="asc"]').attr('class');""")
+            desc_sort = E("""return $('th[title="MasterDateTime"]').find('span[sort="desc"]').attr('class');""")
+            if direction=='asc' and not asc_sort.count('off'):
+                break
+            elif direction=='desc' and not desc_sort.count('off'):
+                break
+            else:
+                # toggle sorting
+                E("""return $('th[title="MasterDateTime"]').find('.s-ico')[0].click();""")
+                T.delay(3)
+
+        '''
+        E = self.br.execute
+        while True:
+            asc_sort = E("""return $('th[title="MasterDateTime"]').find('span[sort="asc"]').attr('class');""")
+            desc_sort = E("""return $('th[title="MasterDateTime"]').find('span[sort="desc"]').attr('class');""")
+            if direction=='asc' and not asc_sort.count('off'):
+                break
+            elif direction=='desc' and not desc_sort.count('off'):
+                break
+            else:
+                # toggle sorting
+                E("""return $('th[title="MasterDateTime"]').find('.s-ico')[0].click();""")
+                self.T.delay(3)
+        return True
         # self._parent.switch_to_active_frame()
-        asc_class = self.br.execute("""return $('.ui-jqgrid-sortable:contains("MasterDateTime")').parent().find('span[sort="asc"]').attr('class');""")
-        if direction=='desc' and asc_class.count('asc off'):
-            return True
-        elif direction=='asc' and asc_class.count('asc') and not asc_class.count('asc off'):
-            return True
-        else:
-            self.br.execute("""return $('.ui-jqgrid-sortable:contains("MasterDateTime")')[0];""").click()
-            return False
+        # asc_class = self.br.execute("""return $('.ui-jqgrid-sortable:contains("MasterDateTime")').parent().find('span[sort="asc"]').attr('class');""")
+        # if direction=='desc' and asc_class.count('asc off'):
+        #     return True
+        # elif direction=='asc' and asc_class.count('asc') and not asc_class.count('asc off'):
+        #     return True
+        # else:
+        #     self.br.execute("""return $('.ui-jqgrid-sortable:contains("MasterDateTime")')[0];""").click()
+        #     return False
             # for it in z:
             #     if it.text=='MasterDateTime':
             #         it.click()
@@ -824,6 +852,10 @@ class Data:
         self                                =   _parent.T.To_Sub_Classes(self,_parent)
         self.br                             =   _parent.br
         self.T                              =   _parent.T
+        self.docs                           =   None
+        self.batches                        =   None
+        self.cookie_fpath                   =   self.T.os.environ['BD'] + "/jobs/law/relativity/cookiefile"
+        self.extracted_store                =   self.T.os.environ['BD'] + "/jobs/law/relativity/docs"
 
     def log(self,msg=None,prefix_caller=True):
         I = self.T.I
@@ -886,19 +918,19 @@ class Data:
             self._parent.open_page('documents')
 
         self.br.window.switch_to.parent_frame()
-        tbl = self.br.execute("return get_doc_data();")
-        df = self.T.pd.DataFrame(tbl)
+        self.br.execute("data_store('clear','doc_data');")
+        df = self.T.pd.DataFrame(self.br.execute("return get_doc_data();"))
         
         self._parent.switch_to_active_frame()
         h = self.T.BS(self.br.source())
-        
+
         # col_j = df.columns.tolist().index('url')
         ctrl_num_dict = dict(zip(
                              df['Control Number'].tolist(),
                              df.index.tolist()  ))
         res = h.find_all('a',text=self.T.re.compile(r'^(REV[0-9]+)'))
         url_base = 'https://relativity.trustpointintl.com'
-        
+
         update_info = []
         for link in res:
             url = link.get('href')
@@ -917,7 +949,7 @@ class Data:
         df.sort_index(by='Control Number',ascending=True,inplace=True)
         udf = self.T.pd.DataFrame(update_info)
         udf.sort_index(by='Control Number',ascending=True,inplace=True)
-        assert udf['Control Number'].tolist()==df['Control Number'].tolist()
+        assert udf['Control Number'].astype(str).tolist()==df['Control Number'].astype(str).tolist()
 
         cols = ['AppID','ArtifactID','url']
         for c in cols:
@@ -934,7 +966,7 @@ class Data:
         df['long_id'] = long_id
 
         df = sanitize_doc_data(df)
-
+        self.docs = df
         return df
 
     def store_batch_data(self):
@@ -950,8 +982,7 @@ class Data:
         return True
 
     def export_cookies(self,fpath=''):
-        if not fpath:
-            fpath="/Users/admin/BD_Scripts/jobs/law/relativity/cookiefile"
+        fpath = fpath if fpath else self.cookie_fpath
         cookies = self.br.window.get_cookies()
         df = self.T.pd.DataFrame(cookies)
         df.rename(columns={'expiry':'expiration'},inplace=True)
@@ -968,18 +999,19 @@ class Data:
 
     def get_extracted_text(self,doc_data=[],store_dir=''):
         if not type(doc_data).__name__=='DataFrame':
-            doc_data = self.get_data()
+            if self.docs:
+                doc_data = self.docs
+            else:
+                doc_data = self.get_data()
         cookiefile = self.export_cookies()
-        if not store_dir:
-            # store_dir="~/BD_Scripts/html/webdrivers/chrome/profiles/relativity/DOWNLOADS/"
-            store_dir="/Users/admin/BD_Scripts/jobs/law/relativity/docs"
+        store_dir = store_dir if store_dir else self.extracted_store
         current_files = self.T.os.listdir(store_dir)
-        empty_text_fnames = self.T.pd.read_sql("select fname from doc_data where extracted_text is null;",self.T.eng).fname.tolist()
+        empty_text_fnames = self.T.pd.read_sql("SELECT fname FROM doc_data WHERE extracted_text IS NULL;",self.T.eng).fname.tolist()
 
         D = {
             'user_agent' : "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36",
             'cookiefile' : cookiefile,
-            'store_dir' : store_dir,
+            'store_dir'  : store_dir,
             }
         for r in doc_data.iterrows():
             d = r[1].to_dict()
@@ -1084,8 +1116,8 @@ class Relativity:
                     self.T.defaults[k]      =   v
 
         self.T.configs                      =   {
-                                                'window_position': {'x':135,'y':30},
-                                                'window_size': {'height':746,'width':1718},
+                                                'window_position': {'x':111, 'y':23, 'windowHandle':'current'},
+                                                'window_size': {'height':710,'width':1750},
                                                 }
         self.sh                             =   self.run_cmd
         self.br                             =   self.T.scraper(browser='chrome', kwargs=self.T).browser
@@ -1664,6 +1696,11 @@ class Relativity:
         return True
 
     def checkin_batch_and_checkout_next_in_set(self):
+        """
+            On completing analysis,
+                run this function (checkin_batch_and_checkout_next_in_set),
+                consider then running function: initial_analysis_prep
+        """
         R = self
         T = R.T
         br = R.br
@@ -1686,7 +1723,7 @@ class Relativity:
             return False
         else:
             idx = remaining_batches_in_set.first_valid_index()
-            self.check_batch('out',df.ix[idx,'Batch'].astype(str))
+            self.check_batch('out',str(df.ix[idx,'Batch']))
             return True
     
     def start(self):
@@ -1700,7 +1737,7 @@ class Relativity:
         self.login()
         self.T.delay(3)
         self.open_project()
-        assert self.br.execute("return identify_page();")=='documents'
+        assert self.identify_page()=='documents'
 
     def error_fix(self):
         self.data.log()
@@ -1756,16 +1793,16 @@ class Relativity:
             T.delay(8)
 
         br.window.switch_to.parent_frame()
-        if E("return identify_page();")=='review':
+        if self.identify_page()=='review':
             br.window.execute_script("top.set_options('autopilot'); top.toggle_autopilot('start');")
             return
 
-        if E("return identify_page();")=='project':
+        if self.identify_page()=='project':
             self.open_project()
             T.delay(3)
 
         br.window.switch_to.parent_frame()
-        if E("return identify_page();")!='documents':
+        if self.identify_page()!='documents':
             self.open_page('documents')
             T.delay(3)
 
@@ -1782,37 +1819,29 @@ class Relativity:
 
     def initial_analysis_prep(self):
         """
+            NEEDS TO END AT 'documents' WITH ALL DOCS VISIBLE (e.g., 1000)
 
         """
+        self.data.log()
         R = self
         T = R.T
         br = R.br
         PG = R.pg.PG
         E = br.execute
 
-        #   Should save data here
-        #   if not R.cfg.set_docs_per_page(1000):
-        #       R.T.delay(3)
-        #   R.cfg.set_batch_category(batch_category='Batch Review - In Progress')
-        #   M_P
-        #   df=T.pd.DataFrame(E("return get_doc_data();"))
-        #   drop table if exists
-        #   df.to_sql(T.tmp_tbl,T.eng)
-        #   update/insert pgsql fx
-        
+        br.window.switch_to.parent_frame()
+
+        if not self.identify_page()=='documents':
+            R.open_page('documents')
         if not R.cfg.set_batch_category(batch_category='Batch Review - To Be Reviewed'):
-            R.T.delay(3)
-        if not R.cfg.set_docs_per_page(10):
-            R.T.delay(3)
+            R.T.delay(1)
         if not R.cfg.set_document_grouping(group_type='No Related Items'):
+            R.T.delay(1)
+        if not R.cfg.set_docs_per_page(1000):
             R.T.delay(3)
-
-        R.cfg.set_conditions(conditions=[{'cond_str':'FileExtension','oper_str':'is not','val_str':'pdf'}])
-
-        R.br.window.switch_to.parent_frame()
-        R.open_page('review')
-        R.cfg.swap_review()
-        R.cfg.set_viewer()
+        R.cfg.sort_by_date('desc')
+        R.cfg.clear_conditions()
+        R.T.delay(3)
 
     def run_analysis(self,skip_pdfs=True):
         """
@@ -1828,52 +1857,82 @@ class Relativity:
         PG = R.pg.PG
         E = br.execute
 
-        br.window.switch_to.parent_frame()
+        self.df = T.pd.DataFrame(E("return get_doc_data();"))
+        df = self.df
 
-        if not self.br.execute("return identify_page();")=='documents':
-            R.open_page('documents')
-        if not R.cfg.set_batch_category(batch_category='Batch Review - To Be Reviewed'):
-            R.T.delay(1)
-        if not R.cfg.set_document_grouping(group_type='No Related Items'):
-            R.T.delay(1)
-        if not R.cfg.set_docs_per_page(10):
+        df = R.data.get_data()
+        # get_data() also stores as self.data.docs
+
+        T.delay(3)
+
+        if self.identify_page()!='review':
+
+            br.window.switch_to.parent_frame()
+
+            if not self.identify_page()=='documents':
+                R.open_page('documents')
+            if not R.cfg.set_batch_category(batch_category='Batch Review - To Be Reviewed'):
+                R.T.delay(1)
+            if not R.cfg.set_document_grouping(group_type='No Related Items'):
+                R.T.delay(1)
+            if not R.cfg.set_docs_per_page(10):
+                R.T.delay(3)
+
+            R.cfg.clear_conditions()
+            conditions=[{'cond_str':'RESPONSIVENESS','oper_str':'is not set'}]
+            if skip_pdfs:
+                conditions.append({'cond_str':'FileExtension','oper_str':'is not','val_str':'pdf'})
+            R.cfg.set_conditions(conditions)
             R.T.delay(3)
+            R.cfg.sort_by_date('desc')
 
-        R.cfg.clear_conditions()
-        conditions=[{'cond_str':'RESPONSIVENESS','oper_str':'is not set'}]
-        if skip_pdfs:
-            conditions.append({'cond_str':'FileExtension','oper_str':'is not','val_str':'pdf'})
-        R.cfg.set_conditions(conditions)
-        R.T.delay(3)
-
-        R.open_page('review')
+            R.open_page('review')
+        
         R.cfg.swap_review()
+        R.cfg.set_viewer()
+
+        orig_data_store = { 
+            'highlight_only'                    : E("data_store('get','highlight_only');"),
+            'auto_next_doc_if_non_responsive'   : E("data_store('get','auto_next_doc_if_non_responsive');"),
+            }
+
+        E("""data_store('set',{
+            'auto_next_doc_if_non_responsive'   :   true,
+            'highlight_only'                    :   true,
+            });""")
 
         total_docs = int(E("""return $('.documentNavigatorNonButtonCell').find('span').last().text().replace(/[^0-9]*/mig,'');"""))
-        while True:
-            try:
-                for i in range(40):
-                    doc_num=int(E("""return $('#_documentNavigator_currentArtifactTextBox_textBox').attr('value');"""))
-                    R.br.window.execute_script("top.set_options(); top.run_analysis();")
-                    tdf=T.pd.DataFrame(E("return create_code_tag_arr();"))
-                    if len(tdf[(tdf.tag_selected==True) & (tdf.tag_text=='Non-Responsive')]):
-                        E("save_next();")
-                    else:
-                        E("toggle_skip_doc();")
-                        E("next_doc();")
-                        E("ForceProfileEditMode();")
+        try:
+            while True:
+                try:
+                    for i in range(40):
+                        # based on above data_store:auto_next_doc_if_non_responsive setting, responsive if page unchanged
+                        doc_num = int(E("""return $('#_documentNavigator_currentArtifactTextBox_textBox').attr('value');"""))
+                        R.br.window.execute_script("top.set_options(); top.run_analysis();")
+                        R.T.delay(2)
+                        doc_num_chk = int(E("""return $('#_documentNavigator_currentArtifactTextBox_textBox').attr('value');"""))
+                        if doc_num==doc_num_chk:
+                            # fetch extracted content if responsive
+                            idx = int(df[df['idx']==doc_num].first_valid_index())
+                            chk = R.data.get_extracted_text(doc_data=df[df.index.isin([idx])==True])
+                            assert chk
+                            E("toggle_skip_doc();")
+                        if doc_num==total_docs:
+                            break
+                        R.T.delay(2)
                     if doc_num==total_docs:
                         break
-                if doc_num==total_docs:
-                    break
-                self.br.window.refresh()
-                self.T.delay(10)
-            except WebDriverException:
-                pass
+                    self.br.window.refresh()
+                    self.T.delay(10)
+                except WebDriverException:
+                    pass
+        except KeyboardInterrupt:
+            self.data.log('END -- last doc_num: %s'%doc_num)
+            return False
         self.data.log('END -- last doc_num: %s'%doc_num)
         return True
 
-    def run_batch_code(self,select_type,js_on_select='none_save_next();',js_on_else='next_doc();',invert=False):
+    def run_batch_code(self,select_type,js_on_select='none_save_next();',js_on_else='next_doc();',invert=False,ctrl_num_list=None):
         """
 
             select_types: all,checked,unchecked
@@ -1896,51 +1955,63 @@ class Relativity:
         self.df = T.pd.DataFrame(E("return get_doc_data();"))
         df = self.df
 
-        if select_type=='all':
-            do_list = df['Control Number'].tolist()
-        elif select_type=='checked':
-            do_list = df[df['input_checkbox']=='checked']['Control Number'].tolist()
-        elif select_type=='unchecked':
-            do_list = df[df['input_checkbox']!='checked']['Control Number'].tolist()
+        if ctrl_num_list:
+            do_list = ctrl_num_list
+        else:
+            if select_type=='all':
+                do_list = df['Control Number'].tolist()
+            elif select_type=='checked':
+                do_list = df[df['input_checkbox']=='checked']['Control Number'].tolist()
+            elif select_type=='unchecked':
+                do_list = df[df['input_checkbox']!='checked']['Control Number'].tolist()
+        
+        if self.identify_page()!='review':
 
-        if not R.cfg.set_batch_category(batch_category='Batch Review - To Be Reviewed'):
-            R.T.delay(3)
-        if not R.cfg.set_docs_per_page(10):
-            R.T.delay(3)
-        if not R.cfg.set_document_grouping(group_type='No Related Items'):
-            R.T.delay(3)
+            if not R.cfg.set_batch_category(batch_category='Batch Review - To Be Reviewed'):
+                R.T.delay(3)
+            if not R.cfg.set_docs_per_page(10):
+                R.T.delay(3)
+            if not R.cfg.set_document_grouping(group_type='No Related Items'):
+                R.T.delay(3)
 
-        R.cfg.set_conditions(conditions=[{'cond_str':'RESPONSIVENESS','oper_str':'is not set'}])
-        R.T.delay(2)
+            R.cfg.set_conditions(conditions=[{'cond_str':'RESPONSIVENESS','oper_str':'is not set'}])
+            R.T.delay(2)
+            R.cfg.sort_by_date('desc')
 
-        R.open_page('review')
+            R.open_page('review')
+        
         R.cfg.swap_review()
+        R.cfg.set_viewer()
 
         total_docs = int(E("""return $('.documentNavigatorNonButtonCell').find('span').last().text().replace(/[^0-9]*/mig,'');"""))
-        while True:
-            try:
-                for i in range(40):
-                    doc_num = int(E("""return $('#_documentNavigator_currentArtifactTextBox_textBox').attr('value');"""))
-                    
-                    if invert:
-                        if not do_list.count(E("return get_doc_records();")['ctrl_number']):
-                            E(js_on_select)
+        try:
+            while True:
+                try:
+                    for i in range(40):
+                        doc_num = int(E("""return $('#_documentNavigator_currentArtifactTextBox_textBox').attr('value');"""))
+                        
+                        if invert:
+                            if not do_list.count(E("return get_doc_records();")['ctrl_number']):
+                                E(js_on_select)
+                            else:
+                                E(js_on_else)
                         else:
-                            E(js_on_else)
-                    else:
-                        if do_list.count(E("return get_doc_records();")['ctrl_number']):
-                            E(js_on_select)
-                        else:
-                            E(js_on_else)
+                            if do_list.count(E("return get_doc_records();")['ctrl_number']):
+                                E(js_on_select)
+                            else:
+                                E(js_on_else)
 
+                        if doc_num==total_docs:
+                            break
                     if doc_num==total_docs:
                         break
-                if doc_num==total_docs:
-                    break
-                self.br.window.refresh()
-                self.T.delay(10)
-            except WebDriverException:
-                pass
+                    self.br.window.refresh()
+                    self.T.delay(10)
+                except WebDriverException:
+                    pass
+        except KeyboardInterrupt:
+            self.data.log('END')
+            return False
         self.data.log('END')
         return True
 
@@ -1960,6 +2031,24 @@ class Relativity:
         if not R.cfg.set_docs_per_page(1000):
             T.delay(3)
         R.br.window.switch_to.parent_frame()
+
+
+        # COMPARE SUBJECTS:
+        print('Comparing Email Subject Lines')
+        df = T.pd.DataFrame(E("return get_doc_data();"))
+        df['subj_clean']=df['Subject'].map(lambda s: re.sub(r'(?iLmsux)^((fw|re)[:\s]*)+','',s))
+        assert len(df[df['subj_clean'].isin(save_list)]) and len(df[df['subj_clean'].isin(save_list)])<len(df)
+        uniq_subjs = sorted(df[df['subj_clean']!=u'']['subj_clean'].unique().tolist())
+
+        chk_cols = [u'RESPONSIVENESS',u'Privilege',u'CONFIDENTIALITY',u'HOT',u'ISSUES']
+        for it in uniq_subjs:
+            cp = df[df['subj_clean']==it].copy().reset_index(drop=True)
+            for chk in chk_cols:
+                t = cp[chk].map(lambda t: None if type(t)==list else t)
+                if len(t.unique().tolist())>1:
+                    print 'Different %s with subj: %s' % (str(chk),it)
+        print('Comparing Email Subject Lines-DONE')
+
         print(E("var dd=get_doc_data(); return check_coding_quality(dd,true);"))
         return True
 
